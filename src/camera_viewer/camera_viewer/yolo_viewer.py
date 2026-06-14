@@ -142,7 +142,15 @@ class YOLOViewer(Node):
             )
         else:
 
-             self.target_locked = False
+            self.target_locked = False
+
+            msg = Point()
+            msg.x = 0.0
+            msg.y = 0.0
+            msg.z = 0.0
+
+            self.error_pub.publish(msg)
+
 
         annotated = results[0].plot()
 

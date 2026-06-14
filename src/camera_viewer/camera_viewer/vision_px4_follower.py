@@ -122,7 +122,8 @@ class VisionFollower(Node):
 
         if self.position is None:
             return
-
+        
+        
         offboard = OffboardControlMode()
 
         offboard.timestamp = self.get_clock().now().nanoseconds // 1000
@@ -133,41 +134,51 @@ class VisionFollower(Node):
 
         target_x = self.position.x
         target_y = self.position.y
+
+        target_visible = self.area > 100
+
+        if target_visible:
         
-        if abs(self.error_x) > 20:
+            if abs(self.error_x) > 20:
 
-            y_correction = self.kp_x * self.error_x
+                y_correction = self.kp_x * self.error_x
 
-            y_correction = max(
-                -0.25,
-                min(0.25, y_correction)
+                y_correction = max(
+                    -0.25,
+                    min(0.25, y_correction)
+                )
+
+                target_y += y_correction
+
+            if abs(self.error_y) > 20:
+
+                z_correction = self.kp_z * self.error_y
+
+                z_correction = max(
+                    -0.03,
+                    min(0.03, z_correction)
+                )
+
+                self.target_z += z_correction
+
+            self.target_z = max(-8.0, min(-0.5, self.target_z))
+
+            area_error = self.desired_area - self.area
+
+            x_correction = self.kp_area * area_error
+            if self.counter % 20 == 0:
+                print(
+                    f"AREA={self.area:.0f} "
+                    f"AREA_ERR={area_error:.0f} "
+                    f"X_CORR={x_correction:.3f}"
+                )
+
+            x_correction = max(
+                -0.2,
+                min(0.2, x_correction)
             )
 
-            target_y += y_correction
-
-        if abs(self.error_y) > 20:
-
-            z_correction = self.kp_z * self.error_y
-
-            z_correction = max(
-                -0.03,
-                min(0.03, z_correction)
-            )
-
-            self.target_z += z_correction
-
-        self.target_z = max(-8.0, min(-1.5, self.target_z))
-
-        area_error = self.desired_area - self.area
-
-        x_correction = self.kp_area * area_error
-
-        x_correction = max(
-            -0.2,
-            min(0.2, x_correction)
-        )
-
-        target_x += x_correction
+            target_x += x_correction
 
         sp = TrajectorySetpoint()
 
@@ -205,8 +216,11 @@ class VisionFollower(Node):
         if self.counter % 20 == 0:
 
             print(
+                f"VISIBLE={self.area > 100} "
                 f"EX={self.error_x:.0f} "
                 f"EY={self.error_y:.0f} "
+                f"TZ_CMD={self.target_z:.2f} "
+                f"REAL_Z={self.position.z:.2f} "
                 f"AREA={self.area:.0f} "
                 f"TX={target_x:.2f} "
                 f"TY={target_y:.2f} "
