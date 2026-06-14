@@ -30,6 +30,12 @@ class VisionFollower(Node):
         self.area = 0.0
         self.target_z = -3.0
 
+        self.kp_x = 0.0015
+        self.kp_z = 0.00015
+        self.kp_area = 0.00008
+
+        self.desired_area = 2200
+
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -128,25 +134,40 @@ class VisionFollower(Node):
         target_x = self.position.x
         target_y = self.position.y
         
-        if self.error_x > 40:
-            target_y += 0.1
+        if abs(self.error_x) > 20:
 
-        elif self.error_x < -40:
-            target_y -= 0.1
+            y_correction = self.kp_x * self.error_x
 
-        if self.error_y > 50:
-            self.target_z += 0.01
+            y_correction = max(
+                -0.25,
+                min(0.25, y_correction)
+            )
 
-        elif self.error_y < -50:
-            self.target_z -= 0.01
+            target_y += y_correction
+
+        if abs(self.error_y) > 20:
+
+            z_correction = self.kp_z * self.error_y
+
+            z_correction = max(
+                -0.03,
+                min(0.03, z_correction)
+            )
+
+            self.target_z += z_correction
 
         self.target_z = max(-8.0, min(-1.5, self.target_z))
 
-        if self.area < 1800:
-            target_x += 0.1
+        area_error = self.desired_area - self.area
 
-        elif self.area > 2600:
-            target_x -= 0.1
+        x_correction = self.kp_area * area_error
+
+        x_correction = max(
+            -0.2,
+            min(0.2, x_correction)
+        )
+
+        target_x += x_correction
 
         sp = TrajectorySetpoint()
 
@@ -184,11 +205,12 @@ class VisionFollower(Node):
         if self.counter % 20 == 0:
 
             print(
-                f"err_x={self.error_x:.0f} "
-                f"err_y={self.error_y:.0f} "
-                f"area={self.area:.0f} "
-                f"z_cmd={self.target_z:.2f} "
-                f"real_z={self.position.z:.2f}"
+                f"EX={self.error_x:.0f} "
+                f"EY={self.error_y:.0f} "
+                f"AREA={self.area:.0f} "
+                f"TX={target_x:.2f} "
+                f"TY={target_y:.2f} "
+                f"TZ={self.target_z:.2f}"
             )
 
 
