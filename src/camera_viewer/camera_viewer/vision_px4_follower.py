@@ -5,6 +5,9 @@ from rclpy.qos import DurabilityPolicy
 from rclpy.qos import HistoryPolicy
 from rclpy.node import Node
 
+from px4_msgs.msg import VehicleAttitude
+import math
+
 from geometry_msgs.msg import Point
 
 from px4_msgs.msg import (
@@ -36,6 +39,9 @@ class VisionFollower(Node):
 
         self.desired_area = 2200
 
+        self.vehicle_yaw = 0.0
+        self.kp_yaw = 0.002
+
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -56,6 +62,13 @@ class VisionFollower(Node):
             self.local_position_callback,
             px4_qos
         )
+
+        self.create_subscription(
+                VehicleAttitude,
+                '/fmu/out/vehicle_attitude',
+                self.attitude_callback,
+                px4_qos
+            )
 
         self.offboard_pub = self.create_publisher(
             OffboardControlMode,
@@ -80,6 +93,24 @@ class VisionFollower(Node):
         self.timer = self.create_timer(
             0.1,
             self.timer_callback
+        )
+
+
+    def attitude_callback(self, msg):
+
+        q = msg.q
+
+        w = q[0]
+        x = q[1]
+        y = q[2]
+        z = q[3]
+
+        siny = 2.0 * (w * z + x * y)
+        cosy = 1.0 - 2.0 * (y * y + z * z)
+
+        self.vehicle_yaw = math.atan2(
+            siny,
+            cosy
         )
 
     def tracking_callback(self, msg):
@@ -135,20 +166,30 @@ class VisionFollower(Node):
         target_x = self.position.x
         target_y = self.position.y
 
+        desired_yaw = self.vehicle_yaw
+
         target_visible = self.area > 100
 
         if target_visible:
         
             if abs(self.error_x) > 20:
 
-                y_correction = self.kp_x * self.error_x
-
-                y_correction = max(
-                    -0.25,
-                    min(0.25, y_correction)
+                yaw_correction = (
+                    self.kp_yaw *
+                    self.error_x
                 )
 
-                target_y += y_correction
+                yaw_correction = max(
+                    -0.4,
+                    min(0.4, yaw_correction)
+                )
+
+                desired_yaw += yaw_correction
+
+                print(
+                    f"EX={self.error_x:.0f} "
+                    f"YAW_CORR={yaw_correction:.3f}"
+                )
 
             if abs(self.error_y) > 20:
 
@@ -161,24 +202,28 @@ class VisionFollower(Node):
 
                 self.target_z += z_correction
 
-            self.target_z = max(-8.0, min(-0.5, self.target_z))
+            self.target_z = max(-8.0, min(-0.3, self.target_z))
 
-            area_error = self.desired_area - self.area
 
-            x_correction = self.kp_area * area_error
-            if self.counter % 20 == 0:
-                print(
-                    f"AREA={self.area:.0f} "
-                    f"AREA_ERR={area_error:.0f} "
-                    f"X_CORR={x_correction:.3f}"
+            if abs(self.error_x) < 50:
+
+                area_error = self.desired_area - self.area
+
+                x_correction = self.kp_area * area_error
+                if self.counter % 20 == 0:
+                    print(
+                        f"AREA={self.area:.0f} "
+                        f"AREA_ERR={area_error:.0f} "
+                        f"X_CORR={x_correction:.3f}"
+                    )
+
+                x_correction = max(
+                    -0.2,
+                    min(0.2, x_correction)
                 )
 
-            x_correction = max(
-                -0.2,
-                min(0.2, x_correction)
-            )
+                target_x += x_correction
 
-            target_x += x_correction
 
         sp = TrajectorySetpoint()
 
@@ -192,7 +237,7 @@ class VisionFollower(Node):
 
         sp.velocity = [nan, nan, nan]
 
-        sp.yaw = 0.0
+        sp.yaw = desired_yaw
 
         self.traj_pub.publish(sp)
 
