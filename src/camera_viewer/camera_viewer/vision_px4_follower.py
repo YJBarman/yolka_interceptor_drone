@@ -9,7 +9,7 @@ from px4_msgs.msg import VehicleAttitude
 import math
 
 from geometry_msgs.msg import Point
-
+import time
 from px4_msgs.msg import (
     OffboardControlMode,
     TrajectorySetpoint,
@@ -41,6 +41,11 @@ class VisionFollower(Node):
 
         self.vehicle_yaw = 0.0
         self.kp_yaw = 0.002
+        self.last_seen_time = time.time()
+        self.search_mode = False
+        self.last_seen_error_x = 0.0
+
+
 
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -119,6 +124,11 @@ class VisionFollower(Node):
         self.error_y = msg.y
         self.area = msg.z
 
+        if self.area > 100:
+
+            self.last_seen_time = time.time()
+            self.last_seen_error_x = self.error_x
+
     def local_position_callback(self, msg):
 
         self.position = msg
@@ -170,6 +180,16 @@ class VisionFollower(Node):
 
         target_visible = self.area > 100
 
+        time_since_seen = (
+            time.time() -
+            self.last_seen_time
+        )
+
+        if time_since_seen > 1.0:
+            self.search_mode = True
+        else:
+            self.search_mode = False
+
         if target_visible:
         
             if abs(self.error_x) > 20:
@@ -201,6 +221,7 @@ class VisionFollower(Node):
                 )
 
                 self.target_z += z_correction
+            
 
             self.target_z = max(-8.0, min(-0.3, self.target_z))
 
@@ -224,6 +245,18 @@ class VisionFollower(Node):
 
                 target_x += x_correction * math.cos(self.vehicle_yaw)
                 target_y += x_correction * math.sin(self.vehicle_yaw)
+
+        else:
+
+            if self.search_mode:
+
+                if self.last_seen_error_x > 0:
+
+                    desired_yaw += 0.10
+
+                else:
+
+                    desired_yaw -= 0.10
 
 
         sp = TrajectorySetpoint()
