@@ -37,6 +37,14 @@ class VisionFollower(Node):
         self.kp_z = 0.00015
         self.kp_area = 0.00008
 
+
+        self.prev_error_x = 0.0
+        self.prev_error_y = 0.0
+        self.prev_time = time.time()
+
+        self.target_vx = 0.0
+        self.target_vy = 0.0
+
         self.desired_area = 2200
 
         self.vehicle_yaw = 0.0
@@ -128,6 +136,33 @@ class VisionFollower(Node):
 
             self.last_seen_time = time.time()
             self.last_seen_error_x = self.error_x
+
+        current_time = time.time()
+
+        dt = current_time - self.prev_time
+
+        if dt > 0.01:
+
+            self.target_vx = (
+                self.error_x - self.prev_error_x
+            ) / dt
+
+            self.target_vy = (
+                self.error_y - self.prev_error_y
+            ) / dt
+
+        self.prev_error_x = self.error_x
+        self.prev_error_y = self.error_y
+        self.prev_time = current_time
+        
+        if self.counter % 20 == 0:
+
+            print(
+                f"VX={self.target_vx:.1f} "
+                f"VY={self.target_vy:.1f}"
+            )
+
+
 
     def local_position_callback(self, msg):
 
