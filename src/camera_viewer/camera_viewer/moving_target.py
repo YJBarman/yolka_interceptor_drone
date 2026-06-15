@@ -20,12 +20,31 @@ class MovingTarget(Node):
 
     def timer_callback(self):
 
-        self.t += 0.1
+        self.t += 0.5
 
         x = 5.0 + 3.0 * math.cos(0.4 * self.t)
-        y = 3.0 * math.sin(0.4 * self.t)
-        z = 2.0
-        print(f"x={x:.2f} y={y:.2f} z={z:.2f}")
+        side = 3.0
+
+        phase = int(self.t) % 40
+
+        if phase < 10:
+            x = 5.0
+            y = phase * side / 10
+
+        elif phase < 20:
+            x = 5.0 - (phase-10) * side / 10
+            y = side
+
+        elif phase < 30:
+            x = 2.0
+            y = side - (phase-20) * side / 10
+
+        else:
+            x = 2.0 + (phase-30) * side / 10
+            y = 0.0
+        z = 7.0
+        if int(self.t) % 10 == 0:
+            print(f"TARGET x={x:.1f} y={y:.1f}")
 
         req = f'''
 name: "target_ball"
@@ -55,7 +74,7 @@ orientation {{
         stderr=subprocess.DEVNULL)
         elapsed = time.time() - start
 
-        print(f"service time = {elapsed:.3f}")
+        
 
 
 def main():

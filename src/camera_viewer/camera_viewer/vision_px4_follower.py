@@ -31,7 +31,7 @@ class VisionFollower(Node):
         self.error_x = 0.0
         self.error_y = 0.0
         self.area = 0.0
-        self.target_z = -3.0
+        self.target_z = -8.0
 
         self.kp_x = 0.0015
         self.kp_z = 0.00015
@@ -52,6 +52,8 @@ class VisionFollower(Node):
         self.last_seen_time = time.time()
         self.search_mode = False
         self.last_seen_error_x = 0.0
+
+        self.prediction_time = 0.4
 
 
 
@@ -137,30 +139,27 @@ class VisionFollower(Node):
             self.last_seen_time = time.time()
             self.last_seen_error_x = self.error_x
 
-        current_time = time.time()
+            current_time = time.time()
 
-        dt = current_time - self.prev_time
+            dt = current_time - self.prev_time
 
-        if dt > 0.01:
+            if dt > 0.01:
 
-            self.target_vx = (
-                self.error_x - self.prev_error_x
-            ) / dt
+                self.target_vx = (
+                    self.error_x -
+                    self.prev_error_x
+                ) / dt
 
-            self.target_vy = (
-                self.error_y - self.prev_error_y
-            ) / dt
+                self.target_vy = (
+                    self.error_y -
+                    self.prev_error_y
+                ) / dt
 
-        self.prev_error_x = self.error_x
-        self.prev_error_y = self.error_y
-        self.prev_time = current_time
+            self.prev_error_x = self.error_x
+            self.prev_error_y = self.error_y
+            self.prev_time = current_time
+
         
-        if self.counter % 20 == 0:
-
-            print(
-                f"VX={self.target_vx:.1f} "
-                f"VY={self.target_vy:.1f}"
-            )
 
 
 
@@ -214,6 +213,8 @@ class VisionFollower(Node):
         desired_yaw = self.vehicle_yaw
 
         target_visible = self.area > 100
+        future_ex = self.error_x
+        future_ey = self.error_y
 
         time_since_seen = (
             time.time() -
@@ -226,12 +227,37 @@ class VisionFollower(Node):
             self.search_mode = False
 
         if target_visible:
+
+            predicted_ex = (
+                self.error_x +
+                self.target_vx *
+                self.prediction_time
+            )
+
+            predicted_ey = (
+                self.error_y +
+                self.target_vy *
+                self.prediction_time
+            )
+            
         
-            if abs(self.error_x) > 20:
+            future_ex = (
+                self.error_x +
+                self.target_vx *
+                self.prediction_time
+            )
+
+            future_ey = (
+                self.error_y +
+                self.target_vy *
+                self.prediction_time
+            )
+
+            if abs(future_ex) > 20:
 
                 yaw_correction = (
                     self.kp_yaw *
-                    self.error_x
+                    future_ex
                 )
 
                 yaw_correction = max(
@@ -241,14 +267,13 @@ class VisionFollower(Node):
 
                 desired_yaw += yaw_correction
 
-                print(
-                    f"EX={self.error_x:.0f} "
-                    f"YAW_CORR={yaw_correction:.3f}"
-                )
+                
 
-            if abs(self.error_y) > 20:
+            
 
-                z_correction = self.kp_z * self.error_y
+            if abs(future_ey) > 20:
+
+                z_correction = self.kp_z * future_ey
 
                 z_correction = max(
                     -0.03,
@@ -261,22 +286,23 @@ class VisionFollower(Node):
             self.target_z = max(-8.0, min(-0.3, self.target_z))
 
 
-            if abs(self.error_x) < 100:
+            if abs(future_ex) < 60:
 
                 area_error = self.desired_area - self.area
 
                 x_correction = self.kp_area * area_error
+            
+
+                x_correction = max(
+                    -0.2,
+                    min(0.2, x_correction)
+                )
                 if self.counter % 20 == 0:
                     print(
                         f"AREA={self.area:.0f} "
                         f"AREA_ERR={area_error:.0f} "
                         f"X_CORR={x_correction:.3f}"
                     )
-
-                x_correction = max(
-                    -0.2,
-                    min(0.2, x_correction)
-                )
 
                 target_x += x_correction * math.cos(self.vehicle_yaw)
                 target_y += x_correction * math.sin(self.vehicle_yaw)
@@ -327,19 +353,16 @@ class VisionFollower(Node):
                 1.0
             )
 
-        if self.counter % 20 == 0:
 
-            print(
-                f"VISIBLE={self.area > 100} "
-                f"EX={self.error_x:.0f} "
-                f"EY={self.error_y:.0f} "
-                f"TZ_CMD={self.target_z:.2f} "
-                f"REAL_Z={self.position.z:.2f} "
-                f"AREA={self.area:.0f} "
-                f"TX={target_x:.2f} "
-                f"TY={target_y:.2f} "
-                f"TZ={self.target_z:.2f}"
-            )
+        if self.counter % 50 == 0:
+
+                print(
+                    f"EX={self.error_x:.0f} "
+                    f"PEX={future_ex:.0f} "
+                    f"VX={self.target_vx:.1f}"
+                    f" EY={self.error_y:.0f}"
+                    f" PEY={future_ey:.0f}"
+                )
 
 
 def main():
