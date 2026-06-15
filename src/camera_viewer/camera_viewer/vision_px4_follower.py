@@ -205,7 +205,7 @@ class VisionFollower(Node):
             self.target_z = max(-8.0, min(-0.3, self.target_z))
 
 
-            if abs(self.error_x) < 50:
+            if abs(self.error_x) < 100:
 
                 area_error = self.desired_area - self.area
 
@@ -222,7 +222,8 @@ class VisionFollower(Node):
                     min(0.2, x_correction)
                 )
 
-                target_x += x_correction
+                target_x += x_correction * math.cos(self.vehicle_yaw)
+                target_y += x_correction * math.sin(self.vehicle_yaw)
 
 
         sp = TrajectorySetpoint()

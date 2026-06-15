@@ -30,6 +30,7 @@ setup(
         'yolo_viewer = camera_viewer.yolo_viewer:main',
          'offboard_takeoff = camera_viewer.offboard_takeoff:main',
           'vision_px4_follower = camera_viewer.vision_px4_follower:main',
+          'moving_target = camera_viewer.moving_target:main',
         ],
     },
 )
