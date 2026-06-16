@@ -31,7 +31,9 @@ class VisionFollower(Node):
         self.error_x = 0.0
         self.error_y = 0.0
         self.area = 0.0
-        self.target_z = -8.0
+
+        self.filtered_area = 0.0
+        self.target_z = -14.0
 
         self.kp_x = 0.0015
         self.kp_z = 0.00015
@@ -44,6 +46,14 @@ class VisionFollower(Node):
 
         self.target_vx = 0.0
         self.target_vy = 0.0
+        self.target_world_x = 0.0
+        self.target_world_y = 0.0
+
+        self.prev_target_world_x = 0.0
+        self.prev_target_world_y = 0.0
+
+        self.world_vx = 0.0
+        self.world_vy = 0.0
 
         self.desired_area = 2200
 
@@ -54,6 +64,11 @@ class VisionFollower(Node):
         self.last_seen_error_x = 0.0
 
         self.prediction_time = 0.4
+        self.intercept_gain = 0.0
+
+        self.memory_time = 2.0
+        self.last_target_world_x = 0.0
+        self.last_target_world_y = 0.0
 
 
 
@@ -106,7 +121,7 @@ class VisionFollower(Node):
         self.counter = 0
 
         self.timer = self.create_timer(
-            0.1,
+            0.05,
             self.timer_callback
         )
 
@@ -134,6 +149,11 @@ class VisionFollower(Node):
         self.error_y = msg.y
         self.area = msg.z
 
+        self.filtered_area = (
+            0.9 * self.filtered_area +
+            0.1 * self.area
+        )
+
         if self.area > 100:
 
             self.last_seen_time = time.time()
@@ -155,9 +175,66 @@ class VisionFollower(Node):
                     self.prev_error_y
                 ) / dt
 
+
             self.prev_error_x = self.error_x
             self.prev_error_y = self.error_y
             self.prev_time = current_time
+
+            if self.position is not None:
+
+                distance_scale = max(
+                    1.0,
+                    4000.0 / max(self.area, 1)
+                )
+
+                self.target_world_x = (
+                    self.position.x +
+                    distance_scale *
+                    math.cos(self.vehicle_yaw)
+                )
+
+                self.target_world_y = (
+                    self.position.y +
+                    distance_scale *
+                    math.sin(self.vehicle_yaw)
+                )
+
+                jump = math.sqrt(
+                    (self.target_world_x - self.prev_target_world_x)**2 +
+                    (self.target_world_y - self.prev_target_world_y)**2
+                )
+
+                if jump > 3.0:
+                    self.target_world_x = self.prev_target_world_x
+                    self.target_world_y = self.prev_target_world_y
+                raw_vx = (
+                    self.target_world_x -
+                    self.prev_target_world_x
+                ) / dt
+
+                raw_vy = (
+                    self.target_world_y -
+                    self.prev_target_world_y
+                ) / dt
+
+                self.world_vx = (
+                    0.8 * self.world_vx +
+                    0.2 * raw_vx
+                )
+
+                self.world_vy = (
+                    0.8 * self.world_vy +
+                    0.2 * raw_vy
+                )
+
+                self.prev_target_world_x = self.target_world_x
+                self.prev_target_world_y = self.target_world_y
+
+                self.last_target_world_x = self.target_world_x
+                self.last_target_world_y = self.target_world_y
+
+                
+            
 
         
 
@@ -212,19 +289,26 @@ class VisionFollower(Node):
 
         desired_yaw = self.vehicle_yaw
 
-        target_visible = self.area > 100
+        target_visible = (
+            self.area > 80 and
+            self.filtered_area > 80
+        )
+
         future_ex = self.error_x
         future_ey = self.error_y
+        intercept_offset = 0.0
+        
 
         time_since_seen = (
             time.time() -
             self.last_seen_time
         )
 
-        if time_since_seen > 1.0:
-            self.search_mode = True
-        else:
+        if target_visible:
             self.search_mode = False
+
+        elif time_since_seen > 3.0:
+            self.search_mode = True
 
         if target_visible:
 
@@ -253,6 +337,16 @@ class VisionFollower(Node):
                 self.prediction_time
             )
 
+            future_target_x = (
+                self.target_world_x +
+                self.world_vx * 1.5
+            )
+
+            future_target_y = (
+                self.target_world_y +
+                self.world_vy * 1.5
+            )
+
             if abs(future_ex) > 20:
 
                 yaw_correction = (
@@ -271,22 +365,22 @@ class VisionFollower(Node):
 
             
 
-            if abs(future_ey) > 20:
+            # if abs(future_ey) > 20:
 
-                z_correction = self.kp_z * future_ey
+            #     z_correction = self.kp_z * future_ey
 
-                z_correction = max(
-                    -0.03,
-                    min(0.03, z_correction)
-                )
+            #     z_correction = max(
+            #         -0.03,
+            #         min(0.03, z_correction)
+            #     )
 
-                self.target_z += z_correction
+            #     self.target_z += z_correction
             
 
-            self.target_z = max(-8.0, min(-0.3, self.target_z))
+            self.target_z = max(-20.0, min(-2.0, self.target_z))
 
 
-            if abs(future_ex) < 60:
+            if abs(future_ex) < 120:
 
                 area_error = self.desired_area - self.area
 
@@ -304,20 +398,60 @@ class VisionFollower(Node):
                         f"X_CORR={x_correction:.3f}"
                     )
 
-                target_x += x_correction * math.cos(self.vehicle_yaw)
-                target_y += x_correction * math.sin(self.vehicle_yaw)
+                intercept_offset = (
+                    future_ex *
+                    self.intercept_gain
+                )
+
+                forward_cmd = (
+                    x_correction +
+                    intercept_offset
+                )
+
+                forward_cmd = max(
+                    -0.3,
+                    min(0.3, forward_cmd)
+                )
+
+                target_x += (
+                    forward_cmd *
+                    math.cos(self.vehicle_yaw)
+                )
+
+                target_y += (
+                    forward_cmd *
+                    math.sin(self.vehicle_yaw)
+                )
 
         else:
 
-            if self.search_mode:
+            if time_since_seen < self.memory_time:
 
-                if self.last_seen_error_x > 0:
+                target_x = self.last_target_world_x
+                target_y = self.last_target_world_y
 
-                    desired_yaw += 0.10
+                if self.counter % 20 == 0:
+                    print(
+                        f"MEMORY "
+                        f"TX={target_x:.1f} "
+                        f"TY={target_y:.1f} "
+                        f"T={time_since_seen:.1f}"
+                    )
 
-                else:
+            else:
 
-                    desired_yaw -= 0.10
+                target_x = self.position.x
+                target_y = self.position.y
+
+                if self.search_mode:
+
+                    if self.last_seen_error_x > 0:
+
+                        desired_yaw += 0.10
+
+                    else:
+
+                        desired_yaw -= 0.10
 
 
         sp = TrajectorySetpoint()
@@ -354,15 +488,20 @@ class VisionFollower(Node):
             )
 
 
-        if self.counter % 50 == 0:
+        if self.counter % 20 == 0:
 
+            if target_visible:
                 print(
-                    f"EX={self.error_x:.0f} "
-                    f"PEX={future_ex:.0f} "
-                    f"VX={self.target_vx:.1f}"
-                    f" EY={self.error_y:.0f}"
-                    f" PEY={future_ey:.0f}"
+                    f"VIS={target_visible} "
+                    f"AREA={self.area:.0f} "
+                    f"SEARCH={self.search_mode}"
+                    f"FILT={self.filtered_area:.0f} "
+                    f"LAST={time_since_seen:.1f}"
+
                 )
+            else:
+
+                print("Search mode - target not visible")
 
 
 def main():

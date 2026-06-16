@@ -20,31 +20,16 @@ class MovingTarget(Node):
 
     def timer_callback(self):
 
-        self.t += 0.5
+        self.t += 0.02
 
-        x = 5.0 + 3.0 * math.cos(0.4 * self.t)
-        side = 3.0
+        radius = 4.0
+        speed = 2.0
 
-        phase = int(self.t) % 40
-
-        if phase < 10:
-            x = 5.0
-            y = phase * side / 10
-
-        elif phase < 20:
-            x = 5.0 - (phase-10) * side / 10
-            y = side
-
-        elif phase < 30:
-            x = 2.0
-            y = side - (phase-20) * side / 10
-
-        else:
-            x = 2.0 + (phase-30) * side / 10
-            y = 0.0
-        z = 7.0
-        if int(self.t) % 10 == 0:
-            print(f"TARGET x={x:.1f} y={y:.1f}")
+        x = 5.0 + radius * math.cos(speed * self.t)
+        y = 5.0 + radius * math.sin(speed * self.t)
+        z = 12.0
+        
+       
 
         req = f'''
 name: "target_ball"
