@@ -25,24 +25,17 @@ class VisionFollower(Node):
         self.error_y = 0.0
         self.area = 0.0
         self.filtered_area = 0.0
-        self.target_z = -14.0
+        self.target_z = -2.5
 
-        self.kp_x = 0.0015
-        self.kp_z = 0.00015
-        self.kp_area = 0.00008
+        # Control Gains
+        self.kp_yaw = 0.0025
+        self.kp_track_dist = 0.25  # Proportional gain for world-space tracking distance error
 
         self.visible_counter = 0
         self.lost_counter = 0
-
-        self.prev_error_x = 0.0
-        self.prev_error_y = 0.0
         self.prev_time = time.time()
 
-        # --- FIX: Re-instated pixel-space tracking velocities ---
-        self.target_vx = 0.0
-        self.target_vy = 0.0
-
-        # Target world states (updated by the Kalman Filter)
+        # Target world states (updated by Kalman Filter)
         self.target_world_x = 0.0
         self.target_world_y = 0.0
         self.world_vx = 0.0
@@ -54,7 +47,10 @@ class VisionFollower(Node):
         self.desired_area = 2200
         self.distance_calib_constant = 140.0 
 
-        # Kalman Filter Initialization
+        # Derived ideal distance profile in meters (e.g., 140 / sqrt(2200) = ~3.0 meters)
+        self.desired_distance = self.distance_calib_constant / math.sqrt(self.desired_area)
+
+        # Kalman Filter Setup
         self.kf_initialized = False
         self.kf_x = np.zeros((4, 1))
         self.kf_P = np.eye(4) * 10.0
@@ -62,19 +58,17 @@ class VisionFollower(Node):
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0]
         ])
-        self.kf_R = np.eye(2) * 0.2
-        self.kf_Q = np.eye(4) * 0.05
+        self.kf_R = np.eye(2) * 0.15  # Tuned down measurement variance slightly based on clean logs
+        self.kf_Q = np.eye(4) * 0.08  # Process noise allows filter to quickly adjust to target turns
 
         self.vehicle_yaw = 0.0
-        self.kp_yaw = 0.002
         self.last_seen_time = time.time() - 10.0
         self.search_mode = True
         self.last_seen_error_x = 0.0
 
-        self.prediction_time = 0.4
-        self.intercept_gain = 0.0
-        self.memory_time = 2.0 
-
+        # --- STEP 3 PARAMETERS ---
+        self.prediction_time = 0.5  # Look-ahead time horizon (seconds)
+        self.memory_time = 2.0
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -118,29 +112,24 @@ class VisionFollower(Node):
             if dt < 0.001:
                 dt = 0.05 
 
-            # Calculate pixel velocity for camera projection
-            self.target_vx = (self.error_x - self.prev_error_x) / dt
-            self.target_vy = (self.error_y - self.prev_error_y) / dt
-
-            self.prev_error_x = self.error_x
-            self.prev_error_y = self.error_y
             self.prev_time = current_time
 
             if self.position is not None:
+                # Square root distance calculation
                 distance_scale = max(1.0, self.distance_calib_constant / math.sqrt(max(self.area, 1.0)))
 
                 raw_target_world_x = self.position.x + distance_scale * math.cos(self.vehicle_yaw)
                 raw_target_world_y = self.position.y + distance_scale * math.sin(self.vehicle_yaw)
 
                 jump = math.sqrt((raw_target_world_x - self.prev_target_world_x)**2 + (raw_target_world_y - self.prev_target_world_y)**2)
-                if jump > 3.0 and self.kf_initialized:
+                if jump > 4.0 and self.kf_initialized:
                     raw_target_world_x = self.prev_target_world_x
                     raw_target_world_y = self.prev_target_world_y
 
                 self.prev_target_world_x = raw_target_world_x
                 self.prev_target_world_y = raw_target_world_y
 
-                # Kalman Filter updates
+                # Kalman State Updates
                 if not self.kf_initialized:
                     self.kf_x = np.array([[raw_target_world_x], [raw_target_world_y], [0.0], [0.0]])
                     self.kf_P = np.eye(4) * 1.0
@@ -201,45 +190,59 @@ class VisionFollower(Node):
         desired_yaw = self.vehicle_yaw
         
         time_since_seen = time.time() - self.last_seen_time
-        actual_target_visible = (self.area > 100) and (time_since_seen < 0.2)
+        actual_target_visible = (self.area > 100) and (time_since_seen < 0.25)
 
         if actual_target_visible:
             self.search_mode = False
             
-            future_ex = self.error_x + self.target_vx * self.prediction_time
+            # 1. Compute Target's Future Spatial Intercept Point
+            pred_target_x = self.target_world_x + (self.world_vx * self.prediction_time)
+            pred_target_y = self.target_world_y + (self.world_vy * self.prediction_time)
 
-            if abs(future_ex) > 20:
-                yaw_correction = self.kp_yaw * future_ex
-                yaw_correction = max(-0.4, min(0.4, yaw_correction))
+            # 2. Geometric Distance Tracking vector calculations
+            dx = pred_target_x - self.position.x
+            dy = pred_target_y - self.position.y
+            current_distance_to_pred = math.sqrt(dx**2 + dy**2)
+
+            if current_distance_to_pred > 0.1:
+                # Calculate vector direction angle towards the future interception coordinate
+                interception_heading = math.atan2(dy, dx)
+                
+                # Close the gap between current state and tracking footprint
+                distance_error = current_distance_to_pred - self.desired_distance
+                step_magnitude = self.kp_track_dist * distance_error
+                step_magnitude = max(-0.4, min(0.4, step_magnitude)) # Limit target generation velocity step
+
+                # Project coordinate step positions dynamically
+                target_x = self.position.x + step_magnitude * math.cos(interception_heading)
+                target_y = self.position.y + step_magnitude * math.sin(interception_heading)
+
+            # 3. Dynamic Yaw Camera Centering (Align to target tracking coordinate framework)
+            if abs(self.error_x) > 15:
+                yaw_correction = self.kp_yaw * self.error_x
+                yaw_correction = max(-0.3, min(0.3, yaw_correction))
                 desired_yaw += yaw_correction
 
             self.target_z = max(-20.0, min(-2.0, self.target_z))
 
-            intercept_offset = 0.0
-            if abs(future_ex) < 120:
-                area_error = self.desired_area - self.area
-                x_correction = self.kp_area * area_error
-                x_correction = max(-0.2, min(0.2, x_correction))
-
-                intercept_offset = future_ex * self.intercept_gain
-                forward_cmd = max(-0.3, min(0.3, x_correction + intercept_offset))
-
-                target_x = self.position.x + forward_cmd * math.cos(self.vehicle_yaw)
-                target_y = self.position.y + forward_cmd * math.sin(self.vehicle_yaw)
-
             if self.counter % 20 == 0:
-                print(f"TRACKING: AREA={self.area:.0f} | KF_Pos=[{self.target_world_x:.1f}, {self.target_world_y:.1f}] | KF_Vel=[{self.world_vx:.2f}, {self.world_vy:.2f}]")
+                print(f"INTERCEPT ACTIVE: Dist_To_Pred={current_distance_to_pred:.1f}m | "
+                      f"Target_Pred=[{pred_target_x:.1f}, {pred_target_y:.1f}] | "
+                      f"Vel_Vector=[{self.world_vx:.2f}, {self.world_vy:.2f}]")
 
         elif time_since_seen < self.memory_time:
+            # --- PROPAGATED MEMORY DEAD RECKONING ---
             self.search_mode = False
             
+            # Predict location tracking through drop frame sequences smoothly
             target_x = self.target_world_x + (self.world_vx * time_since_seen)
             target_y = self.target_world_y + (self.world_vy * time_since_seen)
             
             if self.counter % 20 == 0:
-                print(f"MEMORY (KF Dead-Reckoning): TX={target_x:.1f} TY={target_y:.1f} | Propagated Time={time_since_seen:.1f}s")
+                print(f"MEMORY INTERCEPT: Moving to Predicted Route -> TX={target_x:.1f} TY={target_y:.1f}")
 
         else:
+            # --- SEARCH PROFILE SCANNING ---
             self.search_mode = True
             self.kf_initialized = False 
             target_x = self.position.x

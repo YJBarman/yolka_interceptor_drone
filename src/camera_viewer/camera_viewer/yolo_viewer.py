@@ -39,7 +39,7 @@ class YOLOViewer(Node):
         # Subscribe to Gazebo drone camera topic
         self.subscription = self.create_subscription(
             Image,
-            '/world/default/model/x500_mono_cam_0/link/camera_link/sensor/camera/image',
+            '/world/kthspacelab/model/x500_mono_cam_0/link/camera_link/sensor/camera/image',
             self.image_callback,
             10
         )
